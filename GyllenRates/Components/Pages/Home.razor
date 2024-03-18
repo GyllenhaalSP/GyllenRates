@@ -1,7 +1,172 @@
 ﻿@page "/"
+@using GyllenRates.Data
+@using GyllenRates.Models
+@using GyllenRates.Services
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@inject CurrencyConversionService ConversionService
+@inject IJSRuntime JSRuntime
 
-<PageTitle>Home</PageTitle>
+<div class="min-h-screen bg-gray-100 flex flex-col justify-center items-center">
+    <div class="bg-white shadow-md rounded-lg p-8 max-w-lg w-full">
+        <h1 class="text-4xl font-bold underline text-center mb-6">
+            Bienvenido a GyllenRates
+        </h1>
 
-<h1>Hello, world!</h1>
+        <div class="mb-4">
+            <label class="block text-gray-700 text-sm font-bold mb-2">
+                Importe:
+            </label>
+            <input @bind="amountText" @onfocus="ClearAmountField" type="text" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Introduce una cantidad" />
+            @if (!string.IsNullOrEmpty(error))
+            {
+                <p class="text-red-500 text-xs italic mt-3">@error</p>
+            }
+        </div>
 
-Welcome to your new app.
+        <CustomDropdown TItem="Currency" TValue="string"
+                        Items="currencies"
+                        ItemText="@((currency) => $"{currency.CurrencyName} ({currency.Code}) - {currency.Country}")"
+                        ItemImageUrl="@((currency) => currency.FlagUrl)"
+                        OnItemSelect="OnBaseCurrencySelect"
+                        ButtonText=@baseCurrencyButtonText></CustomDropdown>
+
+        <CustomDropdown TItem="Currency" TValue="string"
+                        Items="currencies"
+                        ItemText="@((currency) => $"{currency.CurrencyName} ({currency.Code}) - {currency.Country}")"
+                        ItemImageUrl="@((currency) => currency.FlagUrl)"
+                        OnItemSelect="OnTargetCurrencySelect"
+                        ButtonText=@targetCurrencyButtonText></CustomDropdown>
+
+        <div class="flex justify-center mt-4">
+            <button @onclick="ConvertCurrency" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-150 ease-in-out">
+                Convertir
+            </button>
+        </div>
+    </div>
+
+    @if (_conversionResult != null)
+    {
+        <div class="mt-5 bg-white shadow-md rounded-lg p-6 max-w-lg w-full">
+            <h2 class="text-2xl font-bold mb-4">Resultado de la conversión</h2>
+            <p class="text-lg">Total convertido en @selectedTargegCurrencyCode: @_conversionResult.ConvertedAmount.ToString("N2")</p>
+            <p class="text-lg">Tasa de conversión: @_conversionResult.ConversionRate</p>
+        </div>
+    }
+
+   @if (conversionHistory.Any())
+   {
+        <div class="mt-5 mb-5">
+            <h3 class="text-xl font-bold">Historial de Conversiones</h3>
+            @foreach (var conversion in conversionHistory)
+            {
+                <p>@conversion.BaseCode a @conversion.TargetCode: @conversion.Amount.ToString("N2") (@conversion.BaseCode) -> @conversion.ConvertedAmount.ToString("N2") (@conversion.TargetCode) a una tasa de @conversion.ConversionRate.ToString("N4") el @conversion.ConversionDate.ToString("g")</p>
+            }
+        </div>
+        <button @onclick="DeleteConversionHistoryAsync" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-150 ease-in-out">
+            Borrar historial
+        </button>
+    }
+</div>
+
+@code {
+    private decimal amount;
+    private string amountText;
+    private string selectedBaseCurrencyCode;
+    private string selectedTargegCurrencyCode;
+    private string error;
+    private string baseCurrencyButtonText = "Selecciona Divisa de Origen";
+    private string targetCurrencyButtonText = "Selecciona Divisa de Destino";
+    private ConversionResult _conversionResult;
+    private List<ConversionResult> conversionHistory = new();
+    private List<Currency> currencies = new();
+
+    private async Task OnBaseCurrencySelect(Currency currency)
+    {
+        selectedBaseCurrencyCode = currency.Code;
+        baseCurrencyButtonText = $"{currency.CurrencyName} ({currency.Code}) - {currency.Country}";
+        StateHasChanged();
+    }
+
+    private async Task OnTargetCurrencySelect(Currency currency)
+    {
+        selectedTargegCurrencyCode = currency.Code;
+        targetCurrencyButtonText = $"{currency.CurrencyName} ({currency.Code}) - {currency.Country}";
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        using (var db = new AppDbContext())
+        {
+            currencies = await db.Currencies.ToListAsync();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            conversionHistory = await GetConversionHistoryAsync() ?? new List<ConversionResult>();
+            StateHasChanged();
+        }
+    }
+
+    private void ClearAmountField()
+    {
+        amountText = string.Empty;
+    }
+
+    private async Task ConvertCurrency()
+    {
+        try
+        {
+            if (decimal.TryParse(amountText.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out amount))
+            {
+                var result = await ConversionService.ConvertCurrency(selectedBaseCurrencyCode, selectedTargegCurrencyCode, amount);
+                _conversionResult = result;
+                var conversionResult = new ConversionResult
+                    {
+                        BaseCode = selectedBaseCurrencyCode,
+                        TargetCode = selectedTargegCurrencyCode,
+                        Amount = amount,
+                        ConvertedAmount = result.ConvertedAmount,
+                        ConversionRate = result.ConversionRate,
+                        ConversionDate = DateTime.Now
+                    };
+                conversionHistory.Add(conversionResult);
+                if (conversionHistory.Count > 10)
+                {
+                    conversionHistory.RemoveAt(0);
+                }
+                await SaveConversionHistoryAsync(conversionHistory);
+                await InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                error = "El importe introducido debe ser numérico o no está bien formado.";
+            }
+        } 
+        catch (Exception ex)
+        {
+            error = $"El importe introducido debe ser numérico o no está bien formado. {ex.Message}";
+        }
+
+    }
+
+    private async Task SaveConversionHistoryAsync(List<ConversionResult> history)
+    {
+        await JSRuntime.InvokeVoidAsync("saveConversionHistory", "conversionHistory", history);
+    }
+
+    private async Task<List<ConversionResult>> GetConversionHistoryAsync()
+    {
+        return await JSRuntime.InvokeAsync<List<ConversionResult>>("getConversionHistory", "conversionHistory");
+    }
+
+    private async Task DeleteConversionHistoryAsync()
+    {
+        await JSRuntime.InvokeVoidAsync("deleteConversionHistory", "conversionHistory");
+        await JSRuntime.InvokeVoidAsync("location.reload");
+    }
+}

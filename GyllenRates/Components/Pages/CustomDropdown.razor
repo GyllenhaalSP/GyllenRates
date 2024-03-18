@@ -1,0 +1,54 @@
+﻿@typeparam TItem
+@typeparam TValue
+@using System.Linq.Expressions
+
+<div class="relative">
+    <button @onclick="ToggleDropdown" class="bg-blue-500 text-white font-semibold py-2 px-4 rounded inline-flex items-center mt-3">
+        <span>@ButtonText</span>
+    </button>
+    @if (isDropdownOpen)
+    {
+        <div class="absolute bg-white border mt-2 rounded shadow-lg py-1" style="width:500px; z-index:10">
+            @foreach (var item in Items)
+            {
+                <a @onclick="() => SelectItem(item)" class="flex items-center px-4 py-2 hover:bg-gray-100 cursor-pointer">
+                    @if (!string.IsNullOrEmpty(ItemImageUrl(item)))
+                    {
+                        <img src="@ItemImageUrl(item)" alt="Flag" class="h-6 w-6 rounded-full object-cover mr-2">
+                    }
+                    @ItemText(item)
+                </a>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private bool isDropdownOpen = false;
+
+    [Parameter]
+    public List<TItem> Items { get; set; }
+
+    [Parameter]
+    public Func<TItem, string> ItemText { get; set; }
+
+    [Parameter]
+    public Func<TItem, string> ItemImageUrl { get; set; }
+
+    [Parameter]
+    public EventCallback<TItem> OnItemSelect { get; set; }
+
+    [Parameter]
+    public string ButtonText { get; set; } = "Select";
+
+    private void ToggleDropdown()
+    {
+        isDropdownOpen = !isDropdownOpen;
+    }
+
+    private async Task SelectItem(TItem item)
+    {
+        await OnItemSelect.InvokeAsync(item);
+        ToggleDropdown();
+    }
+}
